@@ -78,9 +78,9 @@ function Get-PRFiles {
     
     $files = Invoke-RestMethod -Uri $apiUrl -Headers $headers -Method Get
     
-    # Filter for only 'added' or 'renamed' files, in manifests directory, and YAML files only
+    # Filter for only 'added', 'modified', and 'renamed' YAML files, in manifests directory
     $filesToDownload = $files | Where-Object { 
-        ($_.status -eq 'added' -or $_.status -eq 'renamed') -and
+        ($_.status -eq 'added' -or $_.status -eq 'modified' -or $_.status -eq 'renamed') -and
         $_.filename -like 'manifests/*' -and
         $_.filename -like '*.yaml'
     }
