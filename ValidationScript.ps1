@@ -1,4 +1,5 @@
 function Initialize-WinGetSettings {
+    $ProgressPreference = 'SilentlyContinue'
     $settingsPath = "$env:LOCALAPPDATA\Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\settings.json"
     
     if (-not (Test-Path $settingsPath)) {
