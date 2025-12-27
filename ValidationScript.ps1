@@ -19,6 +19,9 @@ function Initialize-WinGetSettings {
         }
 
         Set-Content -Path $settingsPath -Value $settingsContent -Encoding UTF8
+
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+
         winget settings --enable LocalManifestFiles
         winget source update --name winget
     }
