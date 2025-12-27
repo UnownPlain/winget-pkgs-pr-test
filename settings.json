@@ -7,7 +7,7 @@
 	// },
 
 	"source": {
-		"autoUpdateIntervalInMinutes": 0
+		"autoUpdateIntervalInMinutes": 1
 	},
 	"visual": {
 		"progressBar": "rainbow"
