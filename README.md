@@ -10,7 +10,7 @@ Simple Powershell script for use in VMs to test PRs in the [Windows Package Mana
 Create a VM (Hyper-V recommended) and run:
 
 ```powershell
-New-Item -ItemType File -Path $PROFILE -Force | Out-Null; Add-Content -Path $PROFILE -Value "irm https://raw.githubusercontent.com/UnownPlain/winget-pkgs-pr-test/HEAD/ValidationScript.ps1 | iex"
+irm https://raw.githubusercontent.com/UnownPlain/winget-pkgs-pr-test/HEAD/bootstrap.ps1 | iex
 ```
 
 Restart Powershell, snapshot the VM and start testing:

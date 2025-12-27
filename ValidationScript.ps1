@@ -33,19 +33,27 @@ function Initialize-WinGetSettings {
 function Get-ARPTable {
     $registry_paths = @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*', 'HKCU:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*')
     $arpEntries = @(Get-ItemProperty $registry_paths -ErrorAction SilentlyContinue |
-            Where-Object { $_.DisplayName -and (-not $_.SystemComponent -or $_.SystemComponent -ne 1 ) } |
-            Select-Object DisplayName, DisplayVersion, Publisher, @{N = 'ProductCode'; E = { $_.PSChildName } }, @{N = 'Scope'; E = { if ($_.PSDrive.Name -eq 'HKCU') { 'User' } else { 'Machine' } } }, @{N = 'PackageFamilyName'; E = { $null } })
+        Where-Object { $_.DisplayName -and (-not $_.SystemComponent -or $_.SystemComponent -ne 1 ) } |
+        Select-Object DisplayName, DisplayVersion, Publisher, @{N = 'ProductCode'; E = { $_.PSChildName } }, @{N = 'Scope'; E = { if ($_.PSDrive.Name -eq 'HKCU') { 'User' } else { 'Machine' } } }, @{N = 'PackageFamilyName'; E = { $null } })
 
     $appxPackages = Get-AppxPackage -PackageTypeFilter Main
     foreach ($package in $appxPackages) {
-        $manifest = ($package | Get-AppxPackageManifest -ErrorAction SilentlyContinue).Package.Properties
-        $arpEntries += [PSCustomObject]@{
-            DisplayName       = $manifest.DisplayName
-            DisplayVersion    = $package.Version
-            Publisher         = $manifest.PublisherDisplayName
-            ProductCode       = $null
-            Scope             = $null
-            PackageFamilyName = $package.PackageFamilyName
+        try {
+            $manifest = ($package | Get-AppxPackageManifest).Package.Properties
+            if ($null -ne $manifest) {
+                $arpEntries += [PSCustomObject]@{
+                    DisplayName       = $manifest.DisplayName
+                    DisplayVersion    = $package.Version
+                    Publisher         = $manifest.PublisherDisplayName
+                    ProductCode       = $null
+                    Scope             = $null
+                    PackageFamilyName = $package.PackageFamilyName
+                }
+            }
+        }
+        catch {
+            # Skip packages that throw errors when getting manifest
+            continue
         }
     }
 
@@ -152,13 +160,13 @@ function PRTest {
         
         if ($arpDiff) {
             $arpDiff | Where-Object { $_.SideIndicator -eq '=>' } |
-                Select-Object DisplayName, DisplayVersion, Publisher, ProductCode, PackageFamilyName, Scope |
-                ForEach-Object {
-                    $hash = [ordered]@{}
-                    $_.PSObject.Properties | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Value) } |
-                        ForEach-Object { $hash[$_.Name] = $_.Value }
-                        [PSCustomObject]$hash
-                    } | Format-List | Out-String | ForEach-Object { $_.Trim() }
+            Select-Object DisplayName, DisplayVersion, Publisher, ProductCode, PackageFamilyName, Scope |
+            ForEach-Object {
+                $hash = [ordered]@{}
+                $_.PSObject.Properties | Where-Object { -not [string]::IsNullOrWhiteSpace($_.Value) } |
+                ForEach-Object { $hash[$_.Name] = $_.Value }
+                [PSCustomObject]$hash
+            } | Format-List | Out-String | ForEach-Object { $_.Trim() }
         }
         else {
             Write-Host "No changes detected in ARP table." -ForegroundColor Yellow
