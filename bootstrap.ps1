@@ -1,3 +1,9 @@
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")
+if (-not $isAdmin) {
+    Write-Error "Initializing WinGet requires administrator privileges. Please run PowerShell as Administrator."
+    exit 1
+}
+
 Write-Host "Setting execution policy to RemoteSigned..." -ForegroundColor Cyan
 try {
     Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
