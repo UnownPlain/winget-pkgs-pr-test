@@ -1,8 +1,29 @@
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]"Administrator")
+#Requires -Version 5.1
+#Requires -RunAsAdministrator
+
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    "PSAvoidUsingWriteHost",
+    ""
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    "PSUseShouldProcessForStateChangingFunctions",
+    ""
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    "PSUseSingularNouns",
+    ""
+)]
+param()
+
+$isAdmin = [Security.Principal.WindowsPrincipal]::new(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
 if (-not $isAdmin) {
-    Write-Error "Initializing VM requires administrator privileges. Please run PowerShell as Administrator."
-    exit 1
+    throw 'Initializing the VM requires an elevated Windows PowerShell session.'
 }
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 function Set-RegistryPolicy {
     param(
@@ -57,6 +78,43 @@ function Set-EdgeDebloatPolicies {
     Write-Host "Microsoft Edge policies applied successfully." -ForegroundColor Green
 }
 
+function Invoke-CurlDownload {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Uri,
+
+        [Parameter(Mandatory = $true)]
+        [string]$OutFile
+    )
+
+    & curl.exe --fail --silent --show-error --location --output $OutFile $Uri
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "curl.exe failed to download $Uri (exit code $LASTEXITCODE)"
+    }
+}
+
+function Initialize-WinGetSettings {
+    $settingsPath = Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Packages\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe\LocalState\settings.json'
+
+    if (Test-Path -LiteralPath $settingsPath) {
+        return
+    }
+
+    $settingsUrl = 'https://raw.githubusercontent.com/UnownPlain/winget-pkgs-pr-test/HEAD/settings.json'
+    $settingsDirectory = Split-Path -Path $settingsPath -Parent
+
+    if (-not (Test-Path -LiteralPath $settingsDirectory)) {
+        New-Item -ItemType Directory -Path $settingsDirectory -Force | Out-Null
+    }
+
+    Invoke-CurlDownload -Uri $settingsUrl -OutFile $settingsPath
+    Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+
+    winget settings --enable LocalManifestFiles
+    winget source update --name winget
+}
+
 function Add-DirectoryToMachinePath {
     param(
         [Parameter(Mandatory = $true)]
@@ -94,7 +152,7 @@ function Install-AnthelionKomac {
         New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
     }
 
-    Invoke-WebRequest -Uri $downloadUrl -OutFile $athPath -UseBasicParsing
+    Invoke-CurlDownload -Uri $downloadUrl -OutFile $athPath
     Add-DirectoryToMachinePath -Path $installDirectory
 
     Write-Host "ath.exe installed successfully." -ForegroundColor Green
@@ -134,14 +192,24 @@ public static class Wallpaper {
 
 Write-Host "Setting execution policy to RemoteSigned..." -ForegroundColor Cyan
 try {
-    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+    Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
     Write-Host "Execution policy set successfully." -ForegroundColor Green
 }
 catch {
-    Write-Host "Failed to set execution policy: $_" -ForegroundColor Red
-    exit 1
+    $currentUserPolicy = Get-ExecutionPolicy -Scope CurrentUser
+    $effectivePolicy = Get-ExecutionPolicy
+    $usablePolicies = @('RemoteSigned', 'Unrestricted', 'Bypass')
+
+    if ($currentUserPolicy -eq 'RemoteSigned' -and $effectivePolicy -in $usablePolicies) {
+        Write-Host "Execution policy was set for CurrentUser; the effective policy remains $effectivePolicy due to a more specific scope." -ForegroundColor Yellow
+    }
+    else {
+        Write-Host "Failed to set execution policy: $_" -ForegroundColor Red
+        exit 1
+    }
 }
 
+Initialize-WinGetSettings
 Set-EdgeDebloatPolicies
 Install-AnthelionKomac
 Set-DefaultWindowsWallpaper
