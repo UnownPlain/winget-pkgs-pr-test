@@ -185,20 +185,66 @@ function Invoke-GitHubApi {
     return $response | ConvertFrom-Json
 }
 
+function Resolve-PRReference {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PullRequest
+    )
+
+    $prNumber = 0
+    if ([int]::TryParse($PullRequest, [ref]$prNumber)) {
+        if ($prNumber -le 0) {
+            throw 'The PR number must be greater than zero.'
+        }
+
+        return [PSCustomObject]@{
+            Repository = 'microsoft/winget-pkgs'
+            Number     = $prNumber
+            Url        = "https://github.com/microsoft/winget-pkgs/pull/$prNumber"
+        }
+    }
+
+    $uri = $null
+    if (-not [Uri]::TryCreate($PullRequest, [UriKind]::Absolute, [ref]$uri) -or
+        $uri.Scheme -ne 'https' -or
+        $uri.Host -notin 'github.com', 'www.github.com') {
+        throw "Invalid PR reference '$PullRequest'. Use a winget-pkgs PR number or a GitHub PR URL."
+    }
+
+    $segments = @($uri.AbsolutePath.Trim('/') -split '/')
+    if ($segments.Count -lt 4 -or
+        $segments[2] -ne 'pull' -or
+        -not [int]::TryParse($segments[3], [ref]$prNumber) -or
+        $prNumber -le 0) {
+        throw "Invalid GitHub PR URL '$PullRequest'. Expected https://github.com/{owner}/{repository}/pull/{number}."
+    }
+
+    $repository = "$($segments[0])/$($segments[1])"
+
+    return [PSCustomObject]@{
+        Repository = $repository
+        Number     = $prNumber
+        Url        = "https://github.com/$repository/pull/$prNumber"
+    }
+}
+
 function Get-PRManifestPath {
     param(
         [Parameter(Mandatory = $true)]
-        [int]$PRNumber
+        [Alias('PRNumber')]
+        [string]$PullRequest
     )
 
-    Write-Host "==> Fetching files from PR #$PRNumber`n" -ForegroundColor Cyan
+    $pr = Resolve-PRReference -PullRequest $PullRequest
+
+    Write-Host "==> Fetching files from $($pr.Url)`n" -ForegroundColor Cyan
 
     $headers = @{
         Accept       = 'application/vnd.github+json'
         'User-Agent' = 'WinGet-PR-Test'
     }
 
-    $apiUrl = "https://api.github.com/repos/microsoft/winget-pkgs/pulls/$PRNumber"
+    $apiUrl = "https://api.github.com/repos/$($pr.Repository)/pulls/$($pr.Number)"
     $prInfo = Invoke-GitHubApi -Uri $apiUrl
     $changedFiles = Invoke-GitHubApi -Uri "$apiUrl/files?per_page=100"
     $headSha = $prInfo.head.sha
@@ -210,7 +256,7 @@ function Get-PRManifestPath {
     } | Select-Object -First 1
 
     if (-not $changedManifest) {
-        throw "No manifest YAML files found in PR #$PRNumber"
+        throw "No manifest YAML files found in $($pr.Url)"
     }
 
     $manifestDirectory = $changedManifest.filename -replace '/[^/]+$', ''
@@ -223,7 +269,7 @@ function Get-PRManifestPath {
         throw "No manifest YAML files found in $manifestDirectory"
     }
 
-    $tempFolder = Join-Path $env:TEMP "winget-pr-$PRNumber-$([guid]::NewGuid().ToString('N').Substring(0, 5))"
+    $tempFolder = Join-Path $env:TEMP "winget-pr-$($pr.Number)-$([guid]::NewGuid().ToString('N').Substring(0, 5))"
     New-Item -ItemType Directory -Path $tempFolder -Force | Out-Null
 
     Write-Host "==> Downloading files to $tempFolder" -ForegroundColor Yellow
@@ -271,8 +317,9 @@ function Get-PRManifestPath {
 
 function PRTest {
     param(
-        [Parameter(Mandatory = $true)]
-        [int]$PRNumber,
+        [Parameter(Mandatory = $true, Position = 0)]
+        [Alias('PRNumber', 'Url')]
+        [string]$PullRequest,
 
         [Parameter(ValueFromRemainingArguments = $true)]
         [string[]]$WingetArgs
@@ -282,7 +329,7 @@ function PRTest {
         # Get ARP table before installation
         $originalARP = Get-ARPTable
 
-        $manifestPath = Get-PRManifestPath -PRNumber $PRNumber
+        $manifestPath = Get-PRManifestPath -PullRequest $PullRequest
 
         Write-Host "`n==> Running winget install`n" -ForegroundColor Green
         winget install -m $manifestPath --accept-source-agreements --accept-package-agreements @WingetArgs
