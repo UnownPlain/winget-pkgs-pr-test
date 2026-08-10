@@ -154,6 +154,47 @@ function Get-ARPTable {
         })
 }
 
+function Get-FontTable {
+    $registryLocations = @(
+        @{ Path = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'; Scope = 'Machine' },
+        @{ Path = 'HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts'; Scope = 'User' }
+    )
+
+    $providerProperties = @('PSPath', 'PSParentPath', 'PSChildName', 'PSDrive', 'PSProvider')
+
+    foreach ($location in $registryLocations) {
+        if (-not (Test-Path -LiteralPath $location.Path)) {
+            continue
+        }
+
+        $registryKey = Get-ItemProperty -LiteralPath $location.Path
+        $registryKey.PSObject.Properties | Where-Object {
+            $providerProperties -notcontains $_.Name
+        } | ForEach-Object {
+            [PSCustomObject]@{
+                DisplayName  = $_.Name
+                File         = $_.Value
+                RegistryPath = $location.Path
+                Scope        = $location.Scope
+            }
+        }
+    }
+}
+
+function Test-FontManifestPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $fontInstallerPattern = '^\s*(?:InstallerType|NestedInstallerType):\s*[''"]?font[''"]?\s*(?:#.*)?$'
+    $fontInstaller = Get-ChildItem -LiteralPath $Path -Filter '*.yaml' -File |
+        Select-String -Pattern $fontInstallerPattern |
+        Select-Object -First 1
+
+    return $null -ne $fontInstaller
+}
+
 function Update-ProcessEnvironment {
     foreach ($level in 'Machine', 'User') {
         [Environment]::GetEnvironmentVariables($level).GetEnumerator() | ForEach-Object {
@@ -252,11 +293,11 @@ function Get-PRManifestPath {
 
     $changedManifest = $changedFiles | Where-Object {
         $_.status -in 'added', 'modified', 'renamed' -and
-        $_.filename -like 'manifests/*.yaml'
+        $_.filename -match '^(?:manifests|fonts)/.+\.yaml$'
     } | Select-Object -First 1
 
     if (-not $changedManifest) {
-        throw "No manifest YAML files found in $($pr.Url)"
+        throw "No package or font manifest YAML files found in $($pr.Url)"
     }
 
     $manifestDirectory = $changedManifest.filename -replace '/[^/]+$', ''
@@ -326,37 +367,63 @@ function PRTest {
     )
 
     try {
-        # Get ARP table before installation
-        $originalARP = Get-ARPTable
-
         $manifestPath = Get-PRManifestPath -PullRequest $PullRequest
+        $isFontManifest = Test-FontManifestPath -Path $manifestPath
+
+        if ($isFontManifest) {
+            # Fonts do not create ARP entries, so capture the Windows font registry instead.
+            $originalFonts = @(Get-FontTable)
+        }
+        else {
+            $originalARP = Get-ARPTable
+        }
 
         Write-Host "`n==> Running winget install`n" -ForegroundColor Green
         winget install -m $manifestPath --accept-source-agreements --accept-package-agreements @WingetArgs
 
+        if ($LASTEXITCODE -ne 0) {
+            throw "winget install failed (exit code $LASTEXITCODE)."
+        }
+
         Write-Host "`n==> Updating environment variables..." -NoNewline -ForegroundColor Cyan
         Update-ProcessEnvironment
 
-        # Get ARP table after installation and compare
-        $properties = 'DisplayName', 'DisplayVersion', 'Publisher', 'ProductCode', 'RegistryPath', 'PackageFamilyName', 'Scope'
-        $installedPackages = Compare-Object -ReferenceObject $originalARP -DifferenceObject (Get-ARPTable) -Property $properties -PassThru |
-            Where-Object SideIndicator -EQ '=>'
+        if ($isFontManifest) {
+            $properties = 'DisplayName', 'File', 'RegistryPath', 'Scope'
+            $installedFonts = Compare-Object -ReferenceObject $originalFonts -DifferenceObject @(Get-FontTable) -Property $properties -PassThru |
+                Where-Object SideIndicator -EQ '=>'
 
-        Write-Host "`n==> Installed Packages:`n" -ForegroundColor Cyan
+            Write-Host "`n==> Installed Fonts:`n" -ForegroundColor Cyan
 
-        if ($installedPackages) {
-            $installedPackages | Select-Object $properties | ForEach-Object {
-                $package = [ordered]@{}
-                $_.PSObject.Properties | Where-Object {
-                    -not [string]::IsNullOrWhiteSpace($_.Value)
-                } | ForEach-Object {
-                    $package[$_.Name] = $_.Value
-                }
-                [PSCustomObject]$package
-            } | Format-List | Out-String | ForEach-Object { $_.Trim() }
+            if ($installedFonts) {
+                $installedFonts | Select-Object $properties | Format-List | Out-String | ForEach-Object { $_.Trim() }
+            }
+            else {
+                Write-Host "No changes detected in the Windows font registry." -ForegroundColor Yellow
+            }
         }
         else {
-            Write-Host "No changes detected in ARP table." -ForegroundColor Yellow
+            # Get ARP table after installation and compare
+            $properties = 'DisplayName', 'DisplayVersion', 'Publisher', 'ProductCode', 'RegistryPath', 'PackageFamilyName', 'Scope'
+            $installedPackages = Compare-Object -ReferenceObject $originalARP -DifferenceObject (Get-ARPTable) -Property $properties -PassThru |
+                Where-Object SideIndicator -EQ '=>'
+
+            Write-Host "`n==> Installed Packages:`n" -ForegroundColor Cyan
+
+            if ($installedPackages) {
+                $installedPackages | Select-Object $properties | ForEach-Object {
+                    $package = [ordered]@{}
+                    $_.PSObject.Properties | Where-Object {
+                        -not [string]::IsNullOrWhiteSpace($_.Value)
+                    } | ForEach-Object {
+                        $package[$_.Name] = $_.Value
+                    }
+                    [PSCustomObject]$package
+                } | Format-List | Out-String | ForEach-Object { $_.Trim() }
+            }
+            else {
+                Write-Host "No changes detected in ARP table." -ForegroundColor Yellow
+            }
         }
 
         Write-Host

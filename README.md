@@ -34,6 +34,8 @@ PRTest {pr_number}
 PRTest https://github.com/{owner}/{repository}/pull/{pr_number}
 ```
 
-A PR number uses [`microsoft/winget-pkgs`](https://github.com/microsoft/winget-pkgs) by default. Use the full GitHub PR URL to test a PR from any repository with the same `manifests` directory structure.
+A PR number uses [`microsoft/winget-pkgs`](https://github.com/microsoft/winget-pkgs) by default. Use the full GitHub PR URL to test a PR from any repository with the same `manifests` or `fonts` directory structure.
+
+Font manifests require WinGet 1.12 or later. `PRTest` detects font manifests automatically and reports the font files registered for the current user or machine.
 
 It's recommended to restore to the snapshot after every test.
